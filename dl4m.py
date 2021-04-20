@@ -5,8 +5,8 @@
 # E-mails   bayle.yann@live.fr
 # License   MIT
 # Created   16/08/2017
-# Updated   20/10/2017
-# Version   1.0.0
+# Updated   23/03/2018
+# Version   1.0.1
 #
 
 """
@@ -16,13 +16,18 @@ Description of dl4m.py
 Parse dl4m.bib to create a simple and readable ReadMe.md table.
 
 ..todo::
+    add function that test and report dead http links
     sort bib
     add Fig for tasks, wordcloud, dataaugmentation
     bibtexparser accentuation handling in authors.md list
     error handling
     report on nb item per ENTRYTYPE
+    generate .tsv from .bib
+    wordcloud titles, abstract, articles
+    valid bib field https://www.openoffice.org/bibliographic/bibtex-defs.html
 """
 
+import sys
 import numpy as np
 import matplotlib.pyplot as plt
 import bibtexparser
@@ -35,7 +40,7 @@ def write_bib(bib_database, filen="dl4m.bib"):
     """
     writer = BibTexWriter()
     writer.indent = '  '
-    writer.order_entries_by = ('noneyear', "author")
+    writer.order_entries_by = ('year', "author")
     with open(filen, "w", encoding="utf-8") as bibfile:
         bibfile.write(writer.write(bib_database))
 
@@ -71,7 +76,7 @@ def articles_per_year(bib):
         years.append(year)
 
     plt.xlabel('Years')
-    plt.ylabel('Number of articles')
+    plt.ylabel('Number of Deep Learning articles\n related to Music Information Retrieval')
     year_bins = np.arange(min(years), max(years) + 2.0, 1.0)
     plt.hist(years, bins=year_bins, color="#401153", align="left")
     axe = plt.gca()
@@ -82,6 +87,20 @@ def articles_per_year(bib):
     fig_fn = "fig/articles_per_year.png"
     plt.savefig(fig_fn, dpi=200)
     print("Fig. with number of articles per year saved in", fig_fn)
+
+
+def get_reproducibility(bib):
+    """Description of get_reproducibility
+    Generate insights on reproducibility
+    """
+    cpt = 0
+    for entry in bib:
+        if "code" in entry:
+            if entry["code"][:2] != "No":
+                cpt += 1
+    print(str(cpt) + " articles provide their source code.")
+
+    return cpt
 
 
 def get_nb_articles(bib):
@@ -122,6 +141,11 @@ def generate_list_articles(bib):
     articles = ""
     for entry in bib:
         if "title" in entry:
+            if "year" in entry:
+                articles += "| " + entry["year"] + " "
+            else:
+                print("ERROR: Missing year for ", entry)
+                sys.exit()
             if "link" in entry:
                 articles += "| [" + entry["title"] + "](" + entry["link"] + ") | "
             else:
@@ -138,6 +162,9 @@ def generate_list_articles(bib):
             else:
                 articles += "No "
             articles += "|\n"
+        else:
+            print("ERROR: Missing title for ", entry)
+            sys.exit()
 
     return articles
 
@@ -146,11 +173,16 @@ def generate_summary_table(bib):
     """Description of generate_summary_table
     Parse dl4m.bib to create a simple and readable ReadMe.md table.
     """
-    nb_articles = str(get_nb_articles(bib))
-    nb_authors = str(get_authors(bib))
+    nb_articles = get_nb_articles(bib)
+    nb_repro = get_reproducibility(bib)
+    percent_repro = str(int(nb_repro * 100. / nb_articles))
+    nb_articles = str(nb_articles)
+    nb_repro = str(nb_repro)
+    nb_authors = str(get_authors(bib) - 1)
     nb_tasks = str(get_field(bib, "task"))
     nb_datasets = str(get_field(bib, "dataset"))
     nb_archi = str(get_field(bib, "architecture"))
+    nb_framework = str(get_field(bib, "framework"))
     articles = generate_list_articles(bib)
 
     readme_fn = "README.md"
@@ -165,18 +197,25 @@ def generate_summary_table(bib):
             elif "papers referenced" in line:
                 readme += "- " + nb_articles + " papers referenced. "
                 readme += "See the details in [dl4m.bib](dl4m.bib).\n"
-            elif "unique researchers" in line:
-                readme += "- " + nb_authors + " unique researchers. "
-                readme += "See the list of [authors](authors.md).\n"
+            elif "other researchers" in line:
+                readme += "- If you are applying DL to music, there are ["
+                readme += nb_authors + " other researchers](authors.md) "
+                readme += "in your field.\n"
             elif "tasks investigated" in line:
                 readme += "- " + nb_tasks + " tasks investigated. "
                 readme += "See the list of [tasks](tasks.md).\n"
             elif "datasets used" in line:
                 readme += "- " + nb_datasets + " datasets used. "
                 readme += "See the list of [datasets](datasets.md).\n"
-            elif "architecture used" in line:
+            elif "architectures used" in line:
                 readme += "- " + nb_archi + " architectures used. "
                 readme += "See the list of [architectures](architectures.md).\n"
+            elif "frameworks used" in line:
+                readme += "- " + nb_framework + " frameworks used. "
+                readme += "See the list of [frameworks](frameworks.md).\n"
+            elif "- Only" in line:
+                readme += "- Only " + nb_repro + " articles (" + percent_repro
+                readme += "%) provide their source code.\n"
             else:
                 readme += line
     with open(readme_fn, "w", encoding="utf-8") as filep:
@@ -189,15 +228,79 @@ def validate_field(field_name):
     Assert the validity of the field's name
     """
     fields = ["task", "dataset", "architecture", "author", "dataaugmentation",
-        "link", "title", "year", "journal", "ENTRYTYPE"]
+              "link", "title", "year", "journal", "code", "ENTRYTYPE",
+              "framework"]
     error_str = "Invalid field provided: " + field_name + ". "
     error_str += "Valid fields: " + '[%s]' % ', '.join(map(str, fields))
     assert field_name in fields, error_str
 
+def make_autopct(values):
+    """Wrapper for the custom values to display in the pie chart slices
+    """
+    def my_autopct(pct):
+        """Define custom value to print in pie chart
+        """
+        total = sum(values)
+        val = int(round(pct*total/100.0))
+        return '{p:.1f}%  ({v:d})'.format(p=pct, v=val)
+    return my_autopct
+
+
+def pie_chart(items, field_name, max_nb_slice=8):
+    """Description of pie_chart
+    Display a pie_chart from the items given in input
+    """
+    # plt.figure(figsize=(14, 10))
+    sizes = []
+    labels = sorted(set(items))
+    for label in labels:
+        sizes.append(items.count(label))
+
+    labels = np.array(labels)
+    sizes = np.array(sizes)
+    if len(sizes) > max_nb_slice:
+        new_labels = []
+        new_sizes = []
+        for _ in range(0, max_nb_slice):
+            index = np.where(sizes == max(sizes))[0]
+            if len(index) == len(labels):
+                break
+            new_labels.append(labels[index][0])
+            new_sizes.append(sizes[index][0])
+            labels = np.delete(labels, index)
+            sizes = np.delete(sizes, index)
+        new_labels.append(str(len(labels)) + " others")
+        new_sizes.append(sum(sizes))
+        labels = np.array(new_labels)
+        sizes = np.array(new_sizes)
+
+    colors = ["gold", "yellowgreen", "lightcoral", "lightskyblue",
+              "red", "green", "bisque", "lightgrey", "#555555"]
+
+    tmp_labels = []
+    for label in labels:
+        if "[" in label:
+            label = label[1:].split("]")[0]
+        tmp_labels.append(label)
+    labels = np.array(tmp_labels)
+
+    # h = plt.pie(sizes, labels=labels, colors=colors, shadow=False,
+    plt.pie(sizes, labels=labels, colors=colors, shadow=False,
+            startangle=90, autopct=make_autopct(sizes))
+
+    # Display the legend
+    # leg = plt.legend(h[0], labels, bbox_to_anchor=(0.08, 0.4))
+    # leg.draw_frame(False)
+    plt.axis('equal')
+    fig_fn = "fig/pie_chart_" + field_name + ".png"
+    plt.savefig(fig_fn, dpi=200)
+    plt.close()
+    print("Fig. with number of articles per year saved in", fig_fn)
+
 
 def get_field(bib, field_name):
-    """Description of tasks
-    Generate insights on tasks
+    """Description of get_field
+    Generate insights on the field_name in the bib file
     """
     validate_field(field_name)
     nb_article_missing = 0
@@ -222,7 +325,66 @@ def get_field(bib, field_name):
             filep.write("- " + field + "\n")
     print("List of " + field_name + "s written in", field_fn)
 
+    pie_chart(fields, field_name)
+
     return nb_fields
+
+
+def create_table(bib, outfilen="dl4m.tsv"):
+    """Description of create_table
+    Generate human-readable table in .tsv form.
+    """
+
+    print("Generating the human-readable table as .tsv")
+    # Gather all existing field in bib
+    fields = []
+    for entry in bib:
+        for key in entry:
+            fields.append(key)
+
+    print("Available fields:")
+    print(set(fields))
+    fields = ["year", "ENTRYTYPE", "title", "author", "link", "code", "task",
+              "reproducible", "dataset", "framework", "architecture", "dropout",
+              "batch", "epochs", "dataaugmentation", "input", "dimension",
+              "activation", "loss", "learningrate", "optimizer", "gpu"]
+    print("Fields taken in order (in this order):")
+    print(fields)
+
+    separator = "\t"
+    str2write = ""
+    for field in fields:
+        str2write += field.title() + separator
+    str2write += "\n"
+    for entry in bib:
+        for field in fields:
+            if field in entry:
+                str2write += entry[field]
+            str2write += separator
+        str2write += "\n"
+    with open(outfilen, "w", encoding="UTF-8") as filep:
+        filep.write(str2write)
+
+
+def where_published(bib):
+    """Display insights on where the articles have been published
+    """
+    journals = []
+    conf = []
+    for entry in bib:
+        if "article" in entry["ENTRYTYPE"]:
+            journals.append(entry["journal"])
+        elif "inproceedings" in entry["ENTRYTYPE"]:
+            conf.append(entry["booktitle"])
+    journals = sorted(set(journals))
+    conf = sorted(set(conf))
+
+    with open("publication_type.md", "w") as filep:
+        filep.write("# List of publications type\n\n### Journals:\n\n- ")
+        filep.write("\n- ".join(journals))
+        filep.write("\n\n### Conferences:\n\n- ")
+        filep.write("\n- ".join(conf))
+        filep.write("\n")
 
 
 def main(filen="dl4m.bib"):
@@ -233,6 +395,8 @@ def main(filen="dl4m.bib"):
     bib = load_bib(filen)
     generate_summary_table(bib)
     articles_per_year(bib)
+    create_table(bib)
+    where_published(bib)
 
 
 if __name__ == "__main__":
